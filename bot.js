@@ -111,4 +111,4 @@ bot.on('message', async (msg) => {
     const reply = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
     addToHistory(msg.from.id, 'assistant', reply);
     await sendLong(msg.chat.id, reply);
-    console.log(`[${new Date().toISOString()}] User:${msg.from.id} In:${res.usage.input_tokens} Out:${res.usage.out
+        console.log('Done - User:' + msg.from.id + ' In:' + res.usage.input_tokens + ' Out:' + res.usage.output_tokens);

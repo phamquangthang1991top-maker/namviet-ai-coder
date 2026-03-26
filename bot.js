@@ -68,7 +68,6 @@ function sendLong(chatId, text) {
   sendNext();
 }
 
-// --- GITHUB API ---
 function githubAPI(method, path, data) {
   return new Promise(function(resolve, reject) {
     var body = data ? JSON.stringify(data) : '';
@@ -114,7 +113,6 @@ function pushFile(repo, filePath, content, message) {
   });
 }
 
-// --- PARSE FILES TU CLAUDE RESPONSE ---
 function parseFiles(text) {
   var files = [];
   var startTag = '---FILES_START---';
@@ -143,19 +141,17 @@ function getSummary(text) {
   return text.substring(idx + endTag.length).trim() || 'Ung dung da duoc tao.';
 }
 
-// --- COMMANDS ---
 bot.onText(/\/start/, function(msg) {
   if (!isAllowed(msg.from.id)) return;
   bot.sendMessage(msg.chat.id,
-    'AI Agent Coder - Gom su Nam Viet\n\n' +
+    'AI Agent Coder v2 - Gom su Nam Viet\n\n' +
     'LENH:\n' +
-    '/build [yeu cau] - Tao ung dung moi (AI code + tu push GitHub)\n' +
-    '/chat [cau hoi] - Hoi dap, tu van code\n' +
+    '/build [yeu cau] - Tao ung dung moi (code + push GitHub)\n' +
     '/reset - Xoa lich su\n' +
     '/status - Trang thai\n\n' +
     'VD: /build Tao chatbot Facebook Messenger tu van gom su\n' +
-    'VD: /build Tao dashboard quan ly kho React\n\n' +
-    'Hoac gui truc tiep cau hoi de chat binh thuong.'
+    'VD: /build Tao web dashboard quan ly kho React\n\n' +
+    'Hoac gui tin nhan truc tiep de hoi dap.'
   );
 });
 
@@ -171,7 +167,6 @@ bot.onText(/\/status/, function(msg) {
   bot.sendMessage(msg.chat.id, 'Model: ' + model + '\nLich su: ' + h.length + '\nGitHub: ' + githubUser + '\nUser: ' + msg.from.id);
 });
 
-// --- /build COMMAND ---
 bot.onText(/\/build (.+)/, function(msg, match) {
   if (!isAllowed(msg.from.id)) return;
   var request = match[1];
@@ -183,7 +178,7 @@ bot.onText(/\/build (.+)/, function(msg, match) {
     return;
   }
 
-  bot.sendMessage(chatId, '🔍 Dang phan tich yeu cau:\n\n"' + request + '"\n\nDoi 30-60 giay...');
+  bot.sendMessage(chatId, 'Dang phan tich yeu cau:\n\n"' + request + '"\n\nDoi 30-60 giay...');
   bot.sendChatAction(chatId, 'typing');
 
   claude.messages.create({
@@ -223,17 +218,17 @@ bot.onText(/\/build (.+)/, function(msg, match) {
     };
 
     bot.sendMessage(chatId,
-      '✅ DA CODE XONG!\n\n' +
+      'DA CODE XONG!\n\n' +
       'Yeu cau: ' + request + '\n\n' +
       'Files (' + files.length + '):\n' + fileList + '\n' +
-      'Repo: github.com/' + githubUser + '/' + repoName + '\n\n' +
+      'Repo se tao: ' + githubUser + '/' + repoName + '\n\n' +
       summary + '\n\n' +
-      'Ban muon tao repo va deploy khong?',
+      'Ban muon push len GitHub khong?',
       {
         reply_markup: {
           inline_keyboard: [[
-            { text: '✅ DUYỆT - Push lên GitHub', callback_data: 'approve_build' },
-            { text: '❌ HỦY', callback_data: 'reject_build' }
+            { text: 'DUYET - Push GitHub', callback_data: 'approve_build' },
+            { text: 'HUY', callback_data: 'reject_build' }
           ]]
         }
       }
@@ -246,7 +241,6 @@ bot.onText(/\/build (.+)/, function(msg, match) {
   });
 });
 
-// --- APPROVE / REJECT ---
 bot.on('callback_query', function(query) {
   var userId = query.from.id;
   var chatId = query.message.chat.id;
@@ -259,7 +253,7 @@ bot.on('callback_query', function(query) {
     }
 
     bot.answerCallbackQuery(query.id, { text: 'Dang tao repo...' });
-    bot.sendMessage(chatId, '🚀 Dang tao repo va push code...');
+    bot.sendMessage(chatId, 'Dang tao repo va push code...');
 
     createRepo(build.repoName).then(function(repo) {
       if (repo.message && repo.message.indexOf('already exists') !== -1) {
@@ -268,20 +262,18 @@ bot.on('callback_query', function(query) {
       }
       return repo;
     }).then(function() {
-      // Push tung file, doi 1 giay giua moi file
       var idx = 0;
       function pushNext() {
         if (idx >= build.files.length) {
           var repoUrl = 'https://github.com/' + githubUser + '/' + build.repoName;
           bot.sendMessage(chatId,
-            '✅ HOAN THANH!\n\n' +
+            'HOAN THANH!\n\n' +
             'Repo: ' + repoUrl + '\n\n' +
             'Da push ' + build.files.length + ' files.\n\n' +
-            'Buoc tiep:\n' +
+            'Tiep theo:\n' +
             '1. Vao Railway > New > GitHub Repo > chon "' + build.repoName + '"\n' +
-            '2. Them Variables (neu can)\n' +
-            '3. App tu dong chay!\n\n' +
-            'Hoac gui /build de tao ung dung tiep.'
+            '2. Them Variables neu can\n' +
+            '3. App se tu dong chay!'
           );
           delete pendingBuilds[userId];
           return;
@@ -311,7 +303,6 @@ bot.on('callback_query', function(query) {
   }
 });
 
-// --- CHAT BINH THUONG ---
 bot.on('message', function(msg) {
   if (msg.text && msg.text.charAt(0) === '/') return;
   if (!isAllowed(msg.from.id)) return;
@@ -344,8 +335,3 @@ bot.on('message', function(msg) {
 });
 
 console.log('AI Agent Coder v2 dang chay... Model: ' + model + ' | GitHub: ' + githubUser);
-```
-
-Nhấn **Commit changes**. Sau đó quay lại **Railway** nhấn **Deploy**. Đợi 1-2 phút cho nó online, rồi thử gửi trên Telegram:
-```
-/build Tao chatbot Facebook Messenger tu van gom su cho khach hang

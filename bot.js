@@ -7,6 +7,7 @@ var telegramToken = process.env.TELEGRAM_BOT_TOKEN;
 var anthropicKey = process.env.ANTHROPIC_API_KEY;
 var githubToken = process.env.GITHUB_TOKEN;
 var githubUser = process.env.GITHUB_USERNAME;
+var railwayToken = process.env.RAILWAY_TOKEN;
 var allowedUsers = (process.env.ALLOWED_USER_IDS || '').split(',').map(function(id) { return parseInt(id.trim()); });
 var model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 
@@ -113,6 +114,71 @@ function pushFile(repo, filePath, content, message) {
   });
 }
 
+function railwayAPI(query, variables) {
+  return new Promise(function(resolve, reject) {
+    var body = JSON.stringify({ query: query, variables: variables || {} });
+    var options = {
+      hostname: 'backboard.railway.app',
+      path: '/graphql/v2',
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + railwayToken,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
+    var req = https.request(options, function(res) {
+      var chunks = [];
+      res.on('data', function(c) { chunks.push(c); });
+      res.on('end', function() {
+        var text = Buffer.concat(chunks).toString();
+        try { resolve(JSON.parse(text)); } catch(e) { resolve(text); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function deployToRailway(repoName) {
+  return railwayAPI(
+    'mutation($input: ProjectCreateInput!) { projectCreate(input: $input) { id name } }',
+    { input: { name: repoName } }
+  ).then(function(result) {
+    if (!result.data || !result.data.projectCreate) {
+      throw new Error('Khong tao duoc project: ' + JSON.stringify(result));
+    }
+    var projectId = result.data.projectCreate.id;
+    console.log('Railway project: ' + projectId);
+
+    return railwayAPI(
+      'query($id: String!) { project(id: $id) { environments { edges { node { id name } } } } }',
+      { id: projectId }
+    ).then(function(envResult) {
+      var envId = '';
+      if (envResult.data && envResult.data.project && envResult.data.project.environments) {
+        var edges = envResult.data.project.environments.edges;
+        if (edges.length > 0) envId = edges[0].node.id;
+      }
+
+      return railwayAPI(
+        'mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }',
+        { input: { projectId: projectId, name: repoName, source: { repo: githubUser + '/' + repoName } } }
+      ).then(function(svcResult) {
+        if (!svcResult.data || !svcResult.data.serviceCreate) {
+          throw new Error('Khong tao duoc service: ' + JSON.stringify(svcResult));
+        }
+        console.log('Railway service: ' + svcResult.data.serviceCreate.id);
+        return {
+          projectId: projectId,
+          url: 'https://railway.app/project/' + projectId
+        };
+      });
+    });
+  });
+}
+
 function parseFiles(text) {
   var files = [];
   var startTag = '---FILES_START---';
@@ -144,14 +210,14 @@ function getSummary(text) {
 bot.onText(/\/start/, function(msg) {
   if (!isAllowed(msg.from.id)) return;
   bot.sendMessage(msg.chat.id,
-    'AI Agent Coder v2 - Gom su Nam Viet\n\n' +
+    'AI Agent Coder v3 - Gom su Nam Viet\n\n' +
     'LENH:\n' +
-    '/build [yeu cau] - Tao ung dung moi (code + push GitHub)\n' +
+    '/build [yeu cau] - Code + Push GitHub + Auto Deploy Railway\n' +
     '/reset - Xoa lich su\n' +
     '/status - Trang thai\n\n' +
-    'VD: /build Tao chatbot Facebook Messenger tu van gom su\n' +
-    'VD: /build Tao web dashboard quan ly kho React\n\n' +
-    'Hoac gui tin nhan truc tiep de hoi dap.'
+    'VD: /build Tao chatbot Facebook tu van gom su\n' +
+    'VD: /build Tao dashboard quan ly kho React\n\n' +
+    'Hoac gui tin nhan de hoi dap.'
   );
 });
 
@@ -164,7 +230,13 @@ bot.onText(/\/reset/, function(msg) {
 bot.onText(/\/status/, function(msg) {
   if (!isAllowed(msg.from.id)) return;
   var h = getHistory(msg.from.id);
-  bot.sendMessage(msg.chat.id, 'Model: ' + model + '\nLich su: ' + h.length + '\nGitHub: ' + githubUser + '\nUser: ' + msg.from.id);
+  bot.sendMessage(msg.chat.id,
+    'Model: ' + model +
+    '\nLich su: ' + h.length +
+    '\nGitHub: ' + githubUser +
+    '\nRailway: ' + (railwayToken ? 'OK' : 'Chua cau hinh') +
+    '\nUser: ' + msg.from.id
+  );
 });
 
 bot.onText(/\/build (.+)/, function(msg, match) {
@@ -178,7 +250,7 @@ bot.onText(/\/build (.+)/, function(msg, match) {
     return;
   }
 
-  bot.sendMessage(chatId, 'Dang phan tich yeu cau:\n\n"' + request + '"\n\nDoi 30-60 giay...');
+  bot.sendMessage(chatId, 'Dang code ung dung:\n\n"' + request + '"\n\nDoi 30-60 giay...');
   bot.sendChatAction(chatId, 'typing');
 
   claude.messages.create({
@@ -195,7 +267,7 @@ bot.onText(/\/build (.+)/, function(msg, match) {
     var summary = getSummary(reply);
 
     if (files.length === 0) {
-      bot.sendMessage(chatId, 'Khong tao duoc file. Thu lai voi yeu cau cu the hon.');
+      bot.sendMessage(chatId, 'Khong tao duoc file. Thu lai cu the hon.');
       return;
     }
 
@@ -219,22 +291,18 @@ bot.onText(/\/build (.+)/, function(msg, match) {
 
     bot.sendMessage(chatId,
       'DA CODE XONG!\n\n' +
-      'Yeu cau: ' + request + '\n\n' +
       'Files (' + files.length + '):\n' + fileList + '\n' +
-      'Repo se tao: ' + githubUser + '/' + repoName + '\n\n' +
       summary + '\n\n' +
-      'Ban muon push len GitHub khong?',
+      'Bam DUYET de tu dong:\n1. Tao repo GitHub\n2. Push code\n3. Deploy Railway',
       {
         reply_markup: {
           inline_keyboard: [[
-            { text: 'DUYET - Push GitHub', callback_data: 'approve_build' },
+            { text: 'DUYET - Build & Deploy', callback_data: 'approve_build' },
             { text: 'HUY', callback_data: 'reject_build' }
           ]]
         }
       }
     );
-
-    console.log('Build ready: ' + files.length + ' files for ' + repoName);
   }).catch(function(err) {
     console.error(err.message);
     bot.sendMessage(chatId, 'Loi: ' + err.message);
@@ -252,8 +320,8 @@ bot.on('callback_query', function(query) {
       return;
     }
 
-    bot.answerCallbackQuery(query.id, { text: 'Dang tao repo...' });
-    bot.sendMessage(chatId, 'Dang tao repo va push code...');
+    bot.answerCallbackQuery(query.id, { text: 'Dang xu ly...' });
+    bot.sendMessage(chatId, 'Buoc 1/3: Tao repo GitHub...');
 
     createRepo(build.repoName).then(function(repo) {
       if (repo.message && repo.message.indexOf('already exists') !== -1) {
@@ -262,20 +330,39 @@ bot.on('callback_query', function(query) {
       }
       return repo;
     }).then(function() {
+      bot.sendMessage(chatId, 'Buoc 2/3: Push ' + build.files.length + ' files...');
+
       var idx = 0;
       function pushNext() {
         if (idx >= build.files.length) {
           var repoUrl = 'https://github.com/' + githubUser + '/' + build.repoName;
-          bot.sendMessage(chatId,
-            'HOAN THANH!\n\n' +
-            'Repo: ' + repoUrl + '\n\n' +
-            'Da push ' + build.files.length + ' files.\n\n' +
-            'Tiep theo:\n' +
-            '1. Vao Railway > New > GitHub Repo > chon "' + build.repoName + '"\n' +
-            '2. Them Variables neu can\n' +
-            '3. App se tu dong chay!'
-          );
-          delete pendingBuilds[userId];
+
+          if (railwayToken) {
+            bot.sendMessage(chatId, 'Buoc 3/3: Deploy len Railway...');
+            deployToRailway(build.repoName).then(function(result) {
+              bot.sendMessage(chatId,
+                'HOAN THANH!\n\n' +
+                'GitHub: ' + repoUrl + '\n' +
+                'Railway: ' + result.url + '\n\n' +
+                'App dang duoc deploy. Vao Railway link tren de xem trang thai va them Variables neu can.'
+              );
+              delete pendingBuilds[userId];
+            }).catch(function(err) {
+              console.error('Railway error: ' + err.message);
+              bot.sendMessage(chatId,
+                'Da push code len GitHub!\n\n' +
+                'GitHub: ' + repoUrl + '\n\n' +
+                'Railway auto-deploy loi: ' + err.message + '\n' +
+                'Thu vao Railway > New > chon repo "' + build.repoName + '"'
+              );
+              delete pendingBuilds[userId];
+            });
+          } else {
+            bot.sendMessage(chatId,
+              'HOAN THANH!\n\nGitHub: ' + repoUrl + '\n\nVao Railway > New > chon repo "' + build.repoName + '" de deploy.'
+            );
+            delete pendingBuilds[userId];
+          }
           return;
         }
         var file = build.files[idx];
@@ -299,7 +386,7 @@ bot.on('callback_query', function(query) {
   } else if (query.data === 'reject_build') {
     delete pendingBuilds[userId];
     bot.answerCallbackQuery(query.id, { text: 'Da huy.' });
-    bot.sendMessage(chatId, 'Da huy. Gui /build de thu lai.');
+    bot.sendMessage(chatId, 'Da huy.');
   }
 });
 
@@ -334,4 +421,4 @@ bot.on('message', function(msg) {
   });
 });
 
-console.log('AI Agent Coder v2 dang chay... Model: ' + model + ' | GitHub: ' + githubUser);
+console.log('AI Agent Coder v3 dang chay... Model: ' + model + ' | GitHub: ' + githubUser + ' | Railway: ' + (railwayToken ? 'OK' : 'N/A'));
